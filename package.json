@@ -1,0 +1,19 @@
+{
+  "name": "eff-read",
+  "version": "1.0.0",
+  "description": "read in data",
+  "main": "main.js",
+  "scripts": {
+    "start": "node -r esm src/sql.js",
+    "test": "jest --watchAll"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^8.1.0",
+    "esm": "^3.2.25",
+    "fs": "0.0.1-security",
+    "mysql": "^2.17.1",
+    "request": "^2.88.0"
+  }
+}
