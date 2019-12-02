@@ -1,38 +1,26 @@
-var mysql = require('mysql')
+//@ts-ignore
+import * as mysql from 'mysql2/promise'
 require('dotenv').config()
 import * as Load from './load'
 
-const main = () => {
-  var con = mysql.createConnection({
+const main = async () => {
+  const con = await mysql.createConnection({
     host: process.env.HOST,
     user: 'root',
     password: process.env.PASSWORD,
   })
-  
-  con.connect(function(err) {
-    if (err) throw err
-    console.log('Connected!')
+
+  await Load.players(con)
+  await Load.seasonStats(con)
+  await Load.weeklyStats(con)
+
+  console.log('trying to close')
+  await con.end(err => {
+    console.log('Good-bye!')
   })
-
-  Load.players(con)
-  setTimeout(() => {
-    Load.seasonStats(con)
-  }, 30000)
-
-  setTimeout(() => {
-    console.log('Completed SQL Queries!')
-    con.end(err => {
-      console.log('Good-bye!')
-    })
-  }, 60000)
-  
-
-
-
 }
 
 main()
-
 
 // con.query('SELECT * FROM JSXR.players', function(error, results, fields) {
 //   const values = results
