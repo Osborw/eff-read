@@ -13,6 +13,7 @@ const main = async () => {
   await Load.players(con)
   await Load.seasonStats(con)
   await Load.weeklyStats(con)
+  await Load.rosters(con)
 
   console.log('trying to close')
   await con.end(err => {

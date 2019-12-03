@@ -1,5 +1,6 @@
 const fetch = require('node-fetch')
 const fs = require('fs')
+require('dotenv').config()
 
 const ELIGIBLE_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']
 
@@ -215,4 +216,46 @@ const getWeeklyData = async (url, con, week) => {
   }))
 
   console.log(`done querying week ${week}`)
+}
+
+//GET ROSTERS
+export const rosters = async con => {
+  return new Promise(async (res, rej) => {
+    console.log('Putting players into rosters')
+    const URL = `https://api.sleeper.app/v1/league/${process.env.LEAGUE_ID}/rosters`
+
+    await getRosterData(URL, con)
+    console.log('also all done')
+    res()
+  })
+}
+
+const getRosterData = async (url, con) => {
+  let data
+  try {
+    const response = await fetch(url)
+    const json = await response.json()
+    data = json
+    console.log('Retrieved JSON')
+  } catch (error) {
+    console.log('ERROR', error)
+    data = []
+  }
+
+  await Promise.all(data.map(async user => {
+    const id = user.owner_id
+    const players = user.players
+    console.log(players)
+    await Promise.all(players.map(async p => {
+      try{
+        console.log(p)
+        await con.execute(`UPDATE JSXR.players SET owner_id = '${id}' WHERE id = ${p};`, [])
+      }
+      catch (err) {
+        console.log(err)
+      }
+    }))
+  }))
+
+  console.log('done querying')
 }
