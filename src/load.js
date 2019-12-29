@@ -1,5 +1,8 @@
+import { isNullOrUndefined } from 'util'
+
 const fetch = require('node-fetch')
 const fs = require('fs')
+const math = require('mathjs')
 require('dotenv').config()
 
 const ELIGIBLE_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']
@@ -40,7 +43,6 @@ const getPlayerData = async (url, con) => {
     console.log('Retrieved JSON')
   } catch (error) {
     console.log('ERROR', error)
-    data = parseJSON('nfl.json')
   }
 
   await con.execute(`DELETE FROM JSXR.players;`, [], err => {
@@ -48,9 +50,16 @@ const getPlayerData = async (url, con) => {
     if (err) console.log('Error delete from JSXR.players', err)
   })
 
-  Object.keys(data).map(id => {
+  let stuff = new Set()
+
+  Object.keys(data).map(async id => {
     const player = data[id]
-    const name = player.full_name ? player.full_name.replace(`'`, `\\'`) : null
+    if(player.position === 'DEF'){
+    Object.keys(player).map(key => {
+      stuff.add(key)
+    }) 
+    }
+    const name = player.full_name ? player.full_name.replace(`'`, `\\'`) : (player.position === 'DEF' ? `${player.first_name} ${player.last_name}` : null)
     const team = player.team || 'FA'
     const position = player.position
     const status = player.status
@@ -71,19 +80,37 @@ const getPlayerData = async (url, con) => {
       player.injury_start_date === undefined ? null : player.injury_start_date
     const search_rank = player.search_rank === null ? -1 : player.search_rank
     const fantasy_positions = player.fantasy_positions || ['unknown']
-    if (!isNaN(id) && active && ELIGIBLE_POSITIONS.includes(position)) {
+    if (position !== 'DEF' && active && ELIGIBLE_POSITIONS.includes(position)) {
       fantasy_positions.map(async p => {
+        try{
         const query = `INSERT INTO JSXR.players 
       (id, name, team, position, fantasy_position, status, injury_status, active, age, years_exp, number, height, weight, depth_chart_position, depth_chart_order, search_rank, fantasy_data_id, stats_id, espn_id, injury_start_date)
-      VALUES (${id}, '${name}', '${team}', '${position}', '${p}', '${status}', '${injury_status}', ${active}, '${age}', '${years_exp}', '${number}', '${height}', ${weight}, '${depth_chart_position}', ${depth_chart_order}, ${search_rank}, ${fantasy_data_id}, ${stats_id}, ${espn_id}, '${injury_start_date}');`
+      VALUES ('${id}', '${name}', '${team}', '${position}', '${p}', '${status}', '${injury_status}', ${active}, '${age}', '${years_exp}', '${number}', '${height}', ${weight}, '${depth_chart_position}', ${depth_chart_order}, ${search_rank}, ${fantasy_data_id}, ${stats_id}, ${espn_id}, '${injury_start_date}');`
 
         await con.execute(query, [], function(error, results, fields) {
-          console.log('im doin it')
           if (error) console.log({ error })
         })
+      } catch (err) {
+        console.log(err)
+      }
       })
     }
+    else if (position === 'DEF' && active){
+      try{
+        const query = `INSERT INTO JSXR.players
+        (id, name, team, position, fantasy_position, active)
+        VALUES ('${id}', '${name}', '${team}', '${position}', '${position}', ${active});`
+
+        await con.execute(query, [], (err, res, fields) => {
+          if (error) console.log({error})
+        })
+      } catch (err) {
+        console.log(err)
+      }
+    }
   })
+
+  console.log(stuff)
 }
 
 
@@ -114,10 +141,9 @@ const getSeasonData = async (url, con) => {
   await con.execute(`DELETE FROM JSXR.season;`, [], (err, res) => {
     console.log('deleting from season')
     if (err) console.log('Error delete from JSXR.season', err)
-    if (res) console.log(res)
   })
 
-  const query = `SELECT id FROM JSXR.players ORDER BY id ASC;`
+  const query = `SELECT id, position FROM JSXR.players ORDER BY id ASC;`
   const resp = await con.execute(query, [])
 
   const fieldsQuery = `DESCRIBE JSXR.season;`
@@ -129,7 +155,7 @@ const getSeasonData = async (url, con) => {
   await Promise.all(ids.map(async p => {
     if (data[p.id]) {
       try {
-        await con.execute(`INSERT INTO JSXR.season (id) VALUES (${p.id})`, [])
+        await con.execute(`INSERT INTO JSXR.season (id) VALUES ('${p.id}')`, [])
       } catch (err) {
         // console.log({err})
       }
@@ -137,11 +163,21 @@ const getSeasonData = async (url, con) => {
         if (allFields.includes(key)){
           try {
             await con.execute(
-              `UPDATE JSXR.season SET ${key} = ? WHERE id = ?`,
+              `UPDATE JSXR.season SET \`${key}\` = ? WHERE id = ?`,
               [data[p.id][key], p.id]
             )
           } catch (err) {
             console.log(err)
+          }
+
+          //If defense, also put games active
+          if(key === 'gp' && p.position === 'DEF') {
+            try{
+              await con.execute(`UPDATE JSXR.season SET gms_active = ? WHERE id = ?`, [data[p.id][key], p.id])
+            }
+            catch (err) {
+              console.log(err)
+            }
           }
         }
       }))
@@ -185,7 +221,7 @@ const getWeeklyData = async (url, con, week) => {
     data = parseJSON('season.json')
   }
 
-  const query = `SELECT id FROM JSXR.players ORDER BY id ASC;`
+  const query = `SELECT id, position FROM JSXR.players ORDER BY id ASC;`
   const resp = await con.execute(query, [])
 
   const fieldsQuery = `DESCRIBE JSXR.weeks;`
@@ -194,9 +230,9 @@ const getWeeklyData = async (url, con, week) => {
 
   const ids = resp[0]
   await Promise.all(ids.map(async p => {
-    if (data[p.id] && data[p.id]['gp'] > 0) {
+    if (data[p.id] && (isNullOrUndefined(data[p.id]['gp']) || data[p.id]['gp'] > 0)) {
       try {
-        await con.execute(`INSERT INTO JSXR.weeks (id, week) VALUES (${p.id}, ${week})`, [])
+        await con.execute(`INSERT INTO JSXR.weeks (id, week) VALUES ('${p.id}', ${week})`, [])
       } catch (err) {
         // console.log({err})
       }
@@ -204,7 +240,7 @@ const getWeeklyData = async (url, con, week) => {
         if (allFields.includes(key)){
           try {
             await con.execute(
-              `UPDATE JSXR.weeks SET ${key} = ? WHERE id = ? AND week = ?`,
+              `UPDATE JSXR.weeks SET \`${key}\` = ? WHERE id = ? AND week = ?`,
               [data[p.id][key], p.id, week]
             )
           } catch (err) {
@@ -212,6 +248,15 @@ const getWeeklyData = async (url, con, week) => {
           }
         }
       }))
+
+      //For defenses
+      if(p.position === 'DEF') {
+        try {
+          await con.execute(`UPDATE JSXR.weeks SET gp = 1, gms_active = 1 WHERE id = ? AND week = ?`, [p.id, week]) 
+        } catch (err) {
+          console.log({err})
+        } 
+      }
     }
   }))
 
@@ -245,11 +290,9 @@ const getRosterData = async (url, con) => {
   await Promise.all(data.map(async user => {
     const id = user.owner_id
     const players = user.players
-    console.log(players)
     await Promise.all(players.map(async p => {
       try{
-        console.log(p)
-        await con.execute(`UPDATE JSXR.players SET owner_id = '${id}' WHERE id = ${p};`, [])
+        await con.execute(`UPDATE JSXR.players SET owner_id = '${id}' WHERE id = '${p}';`, [])
       }
       catch (err) {
         console.log(err)
@@ -258,4 +301,113 @@ const getRosterData = async (url, con) => {
   }))
 
   console.log('done querying')
+}
+
+export const calculateData = async (con) => {
+
+  await calculateAllDefPPR(con)
+
+  let resp
+  const query = `SELECT DISTINCT id FROM JSXR.weeks ORDER BY id ASC;`
+  try{
+    resp = await con.execute(query, [])
+  }
+  catch (err) {
+    console.log(err)
+  }
+  const data = resp[0]
+
+  await Promise.all(data.map(async row => {
+    await calculateStandardDeviation(con, row.id)
+  }))
+}
+
+const calculateStandardDeviation = async (con, id) => {
+  let query = `SELECT week, pts_ppr FROM JSXR.weeks WHERE id = '${id}' ORDER BY week ASC;`
+  let resp = await con.execute(query, [])
+  let data = resp[0].map(week => {
+    return (week['pts_ppr'])
+  })
+
+  const stddev = math.std(data)
+
+  query = `UPDATE JSXR.season SET std_dev = ${stddev} WHERE id = '${id}';`
+  resp = await con.execute(query, [])
+
+}
+
+const calculateAllDefPPR = async con => {
+  
+  let resp
+  const query = `SELECT id FROM JSXR.players WHERE position = 'DEF' ORDER BY id ASC;`
+  try{
+    resp = await con.execute(query, [])
+  }
+  catch (err){
+    console.log(err)
+  }
+  const data = resp[0]
+
+  await Promise.all(data.map(async row => {
+    await calculateDefPPR(con, row.id)
+  }))
+}
+
+const calculateDefPPR = async (con, id) => {
+  const MAX_WEEKS = 17
+
+  let sum = 0
+  let i
+  for(i = 1; i <= MAX_WEEKS; i++){
+    let query = `SELECT pts_allow, ff, fum_rec, \`int\`, sack, def_pr_td, def_st_td, def_td, def_kr_td, safe, def_2pt FROM JSXR.weeks WHERE id = '${id}' AND week = ${i};`
+    let resp
+    try{
+      resp = await con.execute(query, [])
+    }
+    catch (err) {
+      console.log(err)
+    }
+    const data = resp[0][0]
+
+    if (!data) continue
+
+    const ptsAllowed = data['pts_allow']
+
+    let ptsAllowPts = 0
+    if (ptsAllowed === 0){
+      ptsAllowPts = 10
+    }
+    else if (ptsAllowed >= 1 && ptsAllowed <= 6) {
+      ptsAllowPts = 7
+    }
+    else if (ptsAllowed >= 7 && ptsAllowed <= 13 ) {
+      ptsAllowPts = 4
+    }
+    else if (ptsAllowed >= 14 && ptsAllowed <= 20) {
+      ptsAllowPts = 1
+    }
+    else if (ptsAllowed >= 28 && ptsAllowed <= 34) {
+      ptsAllowPts = -1
+    }
+    else if (ptsAllowed >= 35) {
+      ptsAllowPts = -4
+    }
+
+    let ptsPPR = ptsAllowPts + data.ff + data.fum_rec * 2 + data.int * 2 + data.sack + data.def_pr_td * 6 + data.def_st_td * 6 + data.def_td * 6 + data.def_kr_td * 6 + data.safe * 2 + data.def_2pt * 2
+    sum += ptsPPR
+    try{
+      await con.execute(`UPDATE JSXR.weeks SET pts_ppr = ? WHERE id = ? AND week = ?`, [ptsPPR, id, i])
+    }
+    catch (err) {
+      console.log(err)
+    }
+  }
+
+  try{
+    await con.execute(`UPDATE JSXR.season SET pts_ppr = ? WHERE id = ?`, [sum, id])
+  }
+  catch (err) {
+    console.log(err) 
+  }
+
 }
